@@ -1,0 +1,12 @@
+data/raw/
+data/interim/
+data/processed/
+vector_db/
+outputs/
+logs/
+
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.venv/
