@@ -1,0 +1,43 @@
+# configs/rag.yaml
+
+embedding:
+  model_name: "BAAI/bge-m3"
+  batch_size: 16
+  max_length: 1024
+  use_fp16: false
+
+chroma:
+  persist_dir: "vector_db/chroma_content"
+  collection_name: "happyscribe_bge_m3"
+  distance_metric: "cosine"
+
+input:
+  chunks_path: "data/processed/rag/podcasts/happyscribe/chunks.jsonl"
+
+build:
+  skip_existing: true
+
+query_rewrite:
+  enabled: true
+  provider: "lmstudio"
+  base_url: "http://localhost:1234/v1"
+  api_key: "lm-studio"
+  model: "qwen3-4b"
+  max_queries: 5
+  include_original_query: true
+  fallback_to_original: true
+  timeout_seconds: 60
+  cache_enabled: true
+  cache_path: "outputs/source_packs/query_rewrite_cache.jsonl"
+  prompt_version: "v2_core_query"
+
+retrieval:
+  raw_top_k_per_query: 30
+  final_top_k: 8
+  max_chunks_per_doc: 1
+  max_chunks_per_podcast: 3
+  max_chunks_per_title: 1
+  preview_chars: 500
+  min_relevance_distance: 0.42
+  weak_relevance_distance: 0.40
+  min_sources_required: 3

@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python src/build_rag.py \
-  --chunks data/processed/rag/podcasts/happyscribe/chunks.jsonl \
-  --persist-dir vector_db/chroma_content
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
+
+mkdir -p logs/rag
+mkdir -p vector_db/chroma_content
+
+python -m src.build_rag \
+  --config configs/rag.yaml \
+  2>&1 | tee logs/rag/build_rag.log

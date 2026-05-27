@@ -1,12 +1,40 @@
+# VSCode local settings
+.vscode/settings.json
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Conda / virtual envs if created inside project
+.venv/
+venv/
+env/
+ENV/
+
+# Env variables / tokens
+.env
+.env.*
+
+# Logs
+logs/**/*.log
+
+# Large data
 data/raw/
 data/interim/
 data/processed/
-vector_db/
-outputs/
-logs/
 
-__pycache__/
-*.pyc
-.DS_Store
-.env
-.venv/
+# Vector DB
+vector_db/
+
+# Outputs
+outputs/dialogues/
+outputs/source_packs/
+outputs/evaluations/
+
+# Model / HF caches if accidentally placed in project
+.cache/
+huggingface_cache/
+models/
