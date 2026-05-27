@@ -1,0 +1,22 @@
+generator:
+  provider: "lmstudio"
+  base_url: "http://localhost:1234/v1"
+  api_key: "lm-studio"
+  model: "qwen3-32b-mlx"
+  temperature: 0.65
+  top_p: 0.9
+  max_tokens: 9000
+  timeout_seconds: 1200
+
+dialogue:
+  default_rounds: 30
+  language: "Chinese"
+  speaker_a: "A"
+  speaker_b: "B"
+  output_dir: "outputs/dialogues"
+
+  max_source_chars: 18000
+  max_sources: 6
+  max_chars_per_source: 3000
+
+  include_source_notes: true

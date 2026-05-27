@@ -8,7 +8,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
+from src.lmstudio_utils import assert_lmstudio_model_available, make_lmstudio_client
 import yaml
 from openai import OpenAI
 
@@ -210,10 +210,17 @@ def rewrite_query(query: str, config: Dict[str, Any]) -> Dict[str, Any]:
             return cached
 
     try:
-        client = OpenAI(
+        assert_lmstudio_model_available(
+            model=model,
             base_url=base_url,
             api_key=api_key,
-            timeout=timeout_seconds,
+            timeout_seconds=30,
+        )
+
+        client = make_lmstudio_client(
+            base_url=base_url,
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
         )
 
         messages = build_rewrite_prompt(query=query, max_queries=max_queries)

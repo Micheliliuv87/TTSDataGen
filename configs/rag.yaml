@@ -22,7 +22,7 @@ query_rewrite:
   provider: "lmstudio"
   base_url: "http://localhost:1234/v1"
   api_key: "lm-studio"
-  model: "qwen3-4b"
+  model: "qwen/qwen3-4b"
   max_queries: 5
   include_original_query: true
   fallback_to_original: true
