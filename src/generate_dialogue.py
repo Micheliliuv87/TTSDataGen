@@ -106,6 +106,80 @@ def build_source_block(
     return "\n\n".join(blocks)
 
 
+def format_source_appendix(
+    source_pack: Dict[str, Any],
+    excerpt_chars: int = 1200,
+) -> str:
+    sources = source_pack.get("sources", [])
+    if not sources:
+        return "\n\n## Source Appendix\n\nNo retrieved sources were available.\n"
+
+    lines: List[str] = []
+    lines.append("\n\n## Source Appendix")
+    lines.append("")
+    lines.append(
+        "This section is generated deterministically from the retrieved source pack, not written by the language model."
+    )
+    lines.append("")
+
+    for source in sources:
+        rank = source.get("rank", "")
+        title = source.get("title", "")
+        podcast_slug = source.get("podcast_slug", "")
+        url = source.get("url", "")
+        start_timestamp = source.get("start_timestamp", "")
+        end_timestamp = source.get("end_timestamp", "")
+        chunk_id = source.get("chunk_id", "")
+        doc_id = source.get("doc_id", "")
+        chunk_index = source.get("chunk_index", "")
+        distance = source.get("distance", "")
+        matched_queries = source.get("matched_queries", [])
+        text = clean_text(source.get("text", ""))
+
+        if len(text) > excerpt_chars:
+            text = text[:excerpt_chars].rstrip() + "..."
+
+        lines.append(f"### S{rank}. {title}")
+        lines.append("")
+        lines.append(f"- Podcast: `{podcast_slug}`")
+        lines.append(f"- URL: {url if url else 'N/A'}")
+        lines.append(f"- Timestamp: {start_timestamp} - {end_timestamp}")
+        lines.append(f"- Chunk ID: `{chunk_id}`")
+        lines.append(f"- Doc ID: `{doc_id}`")
+        lines.append(f"- Chunk index: `{chunk_index}`")
+        lines.append(f"- Retrieval distance: `{distance}`")
+
+        if matched_queries:
+            lines.append("- Matched queries:")
+            for query in matched_queries:
+                lines.append(f"  - {query}")
+
+        lines.append("")
+        lines.append("Retrieved excerpt:")
+        lines.append("")
+        lines.append("> " + text.replace("\n", "\n> "))
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def strip_model_source_notes(dialogue: str) -> str:
+    """
+    Remove model-generated source notes so the final source appendix
+    is controlled by Python and cannot hallucinate URLs or source IDs.
+    """
+    patterns = [
+        r"\n+##\s*Source Notes\b.*$",
+        r"\n+##\s*Sources\b.*$",
+        r"\n+##\s*Source Appendix\b.*$",
+    ]
+
+    cleaned = dialogue.rstrip()
+    for pattern in patterns:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE | re.DOTALL).rstrip()
+
+    return cleaned
+
 def build_generation_messages(
     source_pack: Dict[str, Any],
     rounds: int,
@@ -142,9 +216,8 @@ def build_generation_messages(
     )
 
     source_note_instruction = (
-        "At the end, add a short 'Source Notes' section. List only source IDs that actually shaped the dialogue, such as S1, S2, S3. Do not invent source IDs."
-        if include_source_notes
-        else "Do not add source notes. Output only the dialogue script."
+        "Do not write Source Notes, Sources, citations, URLs, or a source appendix. "
+        "Python will append the exact source appendix after generation."
     )
 
     system = (
@@ -364,8 +437,17 @@ def main() -> None:
         generator_cfg=generator_cfg,
     )
 
+    dialogue = strip_model_source_notes(dialogue)
+
+    source_appendix = format_source_appendix(
+        source_pack=source_pack,
+        excerpt_chars=int(dialogue_cfg.get("source_appendix_excerpt_chars", 1200)),
+    )
+
+    final_output = dialogue.rstrip() + source_appendix
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(dialogue, encoding="utf-8")
+    output_path.write_text(final_output, encoding="utf-8")
 
     meta_path = output_path.with_suffix(".meta.json")
     meta = {
