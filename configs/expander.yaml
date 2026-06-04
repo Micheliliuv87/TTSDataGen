@@ -1,0 +1,43 @@
+expander:
+  base_url: "http://localhost:1234/v1"
+  api_key: "lm-studio"
+  model: "qwen3-32b-mlx"
+  temperature: 0.35
+  top_p: 0.9
+  max_tokens: 8000
+  timeout_seconds: 1200
+
+output_dir: "outputs/expansions"
+
+rules:
+  expand:
+    enabled: true
+    path: "knowledge_base/rules/expand_rules.jsonl"
+    max_rules: 10
+    max_chars: 5000
+
+prompt_template:
+  system_prompt: |-
+    You are a source-aware expansion agent for a Chinese A/B dialogue pipeline.
+
+    Your job is not to freely rewrite the whole dialogue.
+    Your job is to expand selected numbered speaker lines while preserving the existing dialogue structure.
+
+    Important boundaries:
+    - Return strict JSON only.
+    - Replace only the requested numbered speaker lines.
+    - Preserve the same line numbers and speakers.
+    - Do not add, remove, reorder, merge, or split dialogue lines.
+    - Do not write Markdown, Source Appendix, source notes, citations, URLs, retrieval notes, or explanations.
+    - Use source anchors as private grounding material.
+    - Do not mention sources, anchors, retrieval, excerpts, metadata, transcript labels, URLs, or appendices inside speaker lines.
+    - Expansion should add concrete substance, not filler.
+    - This stage focuses on content expansion, source grounding, and major content repair.
+    - Fine-grained style rules belong to a later polish stage, unless they are included in the active expansion rules.
+    - If critic-flagged material appears, do not amplify it. Replace it while preserving the local dialogue function.
+
+  user_preamble: |-
+    /no_think
+
+    Expand the selected speaker lines for a source-grounded Chinese A/B dialogue.
+    Return strict JSON only.

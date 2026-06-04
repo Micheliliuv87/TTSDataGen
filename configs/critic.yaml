@@ -1,0 +1,15 @@
+critic:
+  base_url: "http://localhost:1234/v1"
+  api_key: "lm-studio"
+  model: "qwen3-32b-mlx"
+  temperature: 0.2
+  top_p: 0.8
+  max_tokens: 5000
+  timeout_seconds: 1200
+
+rules:
+  critique:
+    enabled: true
+    path: "knowledge_base/rules/critique_rules.jsonl"
+    max_rules: 12
+    max_chars: 5000

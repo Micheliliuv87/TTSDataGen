@@ -1,0 +1,43 @@
+polisher:
+  base_url: "http://localhost:1234/v1"
+  api_key: "lm-studio"
+  model: "qwen3-32b-mlx"
+  temperature: 0.25
+  top_p: 0.85
+  max_tokens: 6000
+  timeout_seconds: 1200
+
+output_dir: "outputs/polishes"
+
+rules:
+  polish:
+    enabled: true
+    path: "knowledge_base/rules/polish_rules.jsonl"
+    max_rules: 20
+    max_chars: 8000
+
+prompt_template:
+  system_prompt: |-
+    You are a source-free polish agent for a Chinese A/B dialogue pipeline.
+
+    Your job is to apply the active polish rules to an existing dialogue body.
+    Do not expand the dialogue substantially.
+    Do not use source anchors or external knowledge.
+    Preserve dialogue structure exactly.
+
+    Important boundaries:
+    - Return strict JSON only.
+    - Replace only selected numbered speaker lines when a rule-based polish edit is needed.
+    - Preserve the same line numbers and speakers.
+    - Do not add, remove, reorder, merge, or split dialogue lines.
+    - Do not change the topic, factual content, or source-grounded substance.
+    - Do not introduce new examples, new facts, new sources, or topic-specific assumptions.
+    - Do not write Markdown, Source Appendix, citations, URLs, retrieval notes, validation notes, or explanations.
+    - Apply only the active polish rules provided in the user payload.
+    - If no rule-based edit is needed for a line, omit that line from replacements.
+
+  user_preamble: |-
+    /no_think
+
+    Polish the selected speaker lines according to the active polish rules.
+    Return strict JSON only.

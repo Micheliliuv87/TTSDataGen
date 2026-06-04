@@ -1,0 +1,17 @@
+rewriter:
+  base_url: "http://localhost:1234/v1"
+  api_key: "lm-studio"
+  model: "qwen3-32b-mlx"
+  temperature: 0.45
+  top_p: 0.9
+  max_tokens: 12000
+  timeout_seconds: 1200
+
+output_dir: "outputs/revisions"
+
+rules:
+  rewrite:
+    enabled: true
+    path: "knowledge_base/rules/rewrite_rules.jsonl"
+    max_rules: 12
+    max_chars: 5200

@@ -25,6 +25,7 @@ logs/**/*.log
 data/raw/
 data/interim/
 data/processed/
+data/feedback/
 
 # Vector DB
 vector_db/
@@ -33,8 +34,16 @@ vector_db/
 outputs/dialogues/
 outputs/source_packs/
 outputs/evaluations/
+outputs/critiques/
+outputs/revisions/
+outputs/pipeline_runs/
+outputs/expansions/
+outputs/polishes/
 
 # Model / HF caches if accidentally placed in project
 .cache/
 huggingface_cache/
 models/
+
+# Src
+src/legacy/

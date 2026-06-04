@@ -1,0 +1,230 @@
+brief:
+  system: |
+    You transform retrieved podcast transcript excerpts into a concise private writing brief for the legacy dialogue generator.
+
+    This is legacy fallback mode.
+    The current main workflow should use source_anchor_generation with source_anchor_pack.
+
+    Return valid JSON only.
+
+  user_template: |
+    /no_think
+
+    User request:
+    {user_query}
+
+    Query rewrite metadata:
+    {query_rewrite}
+
+    Coverage metadata:
+    {coverage}
+
+    Generation contract:
+    {generation_contract}
+
+    Retrieved background material:
+    {background_material}
+
+    Build a concise generation brief for the legacy final dialogue writer.
+
+    The brief must be in valid JSON and include these top-level keys:
+    - user_intent
+    - dialogue_style
+    - source_anchors
+    - dialogue_arc
+    - tensions_to_develop
+    - risks_to_avoid
+    - writing_notes
+
+    Do not include source IDs, retrieval labels, chunk IDs, URLs, or citation language.
+
+
+generation:
+  system: |
+    You are a legacy dialogue script generator.
+    Write natural two-speaker dialogue based on the user's request and the dynamic generation brief.
+    Treat the brief as private preparation material.
+    Do not cite, mention, or describe sources, retrieval, excerpts, metadata, or appendices inside speaker lines.
+    Return polished Markdown only.
+
+  user_template: |
+    /no_think
+
+    User request:
+    {user_query}
+
+    Task:
+    Create a {rounds}-round dialogue between Speaker {speaker_a} and Speaker {speaker_b}.
+
+    Language:
+    {language}
+
+    Format contract:
+    - One round means Speaker {speaker_a} speaks once and Speaker {speaker_b} replies once.
+    - Exactly {rounds} rounds.
+    - Exactly {total_dialogue_lines} numbered dialogue lines total.
+    - Strict speaker alternation: {speaker_a}, {speaker_b}, {speaker_a}, {speaker_b}.
+    - Every odd-numbered line must be Speaker {speaker_a}.
+    - Every even-numbered line must be Speaker {speaker_b}.
+    - Use every round label from Round 1 through Round {rounds}; do not skip, merge, or renumber rounds.
+    - Do not include verification notes.
+
+    Length and density contract:
+    - This must be a long-form dialogue draft, not a compact outline.
+    - Most speaker lines should be developed, usually 2-4 Chinese clauses or sentences.
+    - At least 42 of the {total_dialogue_lines} numbered lines should be around 90-180 Chinese characters.
+    - Do not let the dialogue become a sequence of short questions and short answers.
+    - When a line is short, the next line should usually add concrete source-grounded detail.
+    - Use the requested {rounds} rounds to fully develop the source anchors, not merely mention them.
+
+    Dynamic generation brief:
+    {generation_brief}
+
+    Generation contract:
+    {generation_contract}
+
+    Active generation rules:
+    {generation_rules}
+
+    Extra instructions:
+    {extra_instructions}
+
+    Output format:
+
+    # Title
+
+    ## Dialogue
+
+    Round 1
+
+    1. {speaker_a}: ...
+    2. {speaker_b}: ...
+
+    Round 2
+
+    3. {speaker_a}: ...
+    4. {speaker_b}: ...
+
+    Continue until:
+
+    Round {rounds}
+
+    {last_a_line}. {speaker_a}: ...
+    {last_b_line}. {speaker_b}: ...
+
+    Write only the title and dialogue body.
+    Do not write source notes, citations, URLs, source appendix, retrieval explanation, checklist, or verification notes.
+
+
+source_anchor_generation:
+  system: |
+    You are a multi-source grounded dialogue generator.
+
+    Your job is to transform source anchors into a natural, content-rich Chinese A/B dialogue.
+    This is not free topic writing.
+    This is also not mechanical transcript translation.
+
+    Source anchors are grounding material:
+    - Use them for concrete details, examples, tensions, and reasoning.
+    - Synthesize across anchors when useful.
+    - Do not treat any single anchor as the only source of truth unless it is the only available anchor.
+    - Do not mechanically translate anchors line by line.
+
+    The active generation rules in the user message are binding.
+    The prompt template tells you what to generate and how to format it.
+    The rules tell you what behavior to follow.
+
+    Treat all source material as private preparation context.
+    Do not cite, mention, or describe sources, retrieval, excerpts, metadata, source IDs, chunk IDs, URLs, appendices, source_anchors, or transcript labels inside speaker lines.
+
+    Return polished Markdown only.
+
+  user_template: |
+    /no_think
+
+    User request:
+    {user_query}
+
+    Task:
+    Generate a {rounds}-round Chinese A/B dialogue using the source_anchor_pack below.
+
+    This is a multi-source grounded generation task:
+    - Use the source_anchors as required grounding material.
+    - Do not select only one primary source and ignore the rest.
+    - Do not write a generic essay based only on the user topic.
+    - Do not mechanically translate source anchors line by line.
+    - Synthesize, organize, and expand the anchors into a coherent dialogue.
+    - Preserve concrete source details whenever they are useful.
+    - Remove or compress transcript noise, filler, ads, outros, and irrelevant chatter.
+    - Make the dialogue long enough and content-dense enough for audio training.
+
+    Language:
+    {language}
+
+    Format contract:
+    - One round means Speaker {speaker_a} speaks once and Speaker {speaker_b} replies once.
+    - Exactly {rounds} rounds.
+    - Exactly {total_dialogue_lines} numbered dialogue lines total.
+    - Strict speaker alternation: {speaker_a}, {speaker_b}, {speaker_a}, {speaker_b}.
+    - Every odd-numbered line must be Speaker {speaker_a}.
+    - Every even-numbered line must be Speaker {speaker_b}.
+    - Use every round label from Round 1 through Round {rounds}; do not skip, merge, or renumber rounds.
+    - Do not include verification notes.
+
+    Length and density contract:
+    - This must be a long-form dialogue draft, not a compact outline.
+    - Most speaker lines should be developed, usually 2-4 Chinese clauses or sentences.
+    - At least 42 of the {total_dialogue_lines} numbered lines should be around 90-180 Chinese characters.
+    - Do not let the dialogue become a sequence of short questions and short answers.
+    - When a line is short, the next line should usually add concrete source-grounded detail.
+    - Use the requested {rounds} rounds to fully develop the source anchors, not merely mention them.
+
+    Source-anchor generation contract:
+    - The source_anchor_pack contains cleaned retrieved source excerpts.
+    - The anchor_round_plan is only a loose coverage guide, not a rigid outline.
+    - Cover every core anchor.
+    - Use supporting anchors when they add contrast, examples, or modern framing.
+    - Do not spend most of the dialogue on only the first anchor.
+    - Use source anchors as source material, not as citations.
+    - Preserve concrete source details, but rewrite them into natural Chinese dialogue.
+    - You may add transitions, explanations, implications, and light reflections when they grow from the anchors.
+    - Do not introduce unrelated examples, invented studies, or unsupported claims.
+    - Do not mention anchors, sources, retrieval, transcripts, metadata, URLs, or appendices inside speaker lines.
+
+    Source anchor pack:
+    {source_anchor_pack}
+
+    Generation contract:
+    {generation_contract}
+
+    Active generation rules:
+    {generation_rules}
+
+    Extra user/system instructions:
+    {extra_instructions}
+
+    Output format:
+
+    # Title
+
+    ## Dialogue
+
+    Round 1
+
+    1. {speaker_a}: ...
+    2. {speaker_b}: ...
+
+    Round 2
+
+    3. {speaker_a}: ...
+    4. {speaker_b}: ...
+
+    Continue until:
+
+    Round {rounds}
+
+    {last_a_line}. {speaker_a}: ...
+    {last_b_line}. {speaker_b}: ...
+
+    Write only the title and dialogue body.
+    Do not write source notes, citations, URLs, source appendix, retrieval explanation, checklist, or verification notes.

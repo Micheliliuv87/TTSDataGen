@@ -1,0 +1,5 @@
+{"rule_id":"val_format_001","status":"active","priority":100,"category":"format","validator_check":"check_round_count","description":"Check expected number of rounds."}
+{"rule_id":"val_format_002","status":"active","priority":100,"category":"format","validator_check":"check_numbered_lines","description":"Check expected number of numbered dialogue lines."}
+{"rule_id":"val_format_003","status":"active","priority":95,"category":"format","validator_check":"check_ab_alternation","description":"Check strict A/B alternation."}
+{"rule_id":"val_style_001","status":"active","priority":80,"category":"style","validator_check":"count_agreement_openers","description":"Count repetitive agreement openers."}
+{"rule_id":"val_depth_001","status":"active","priority":75,"category":"depth","validator_check":"turn_length_distribution","description":"Check whether too many speaker turns are extremely short."}
