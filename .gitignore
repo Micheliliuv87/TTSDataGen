@@ -45,5 +45,11 @@ outputs/polishes/
 huggingface_cache/
 models/
 
-# Src
+# Src local experiments
 src/legacy/
+
+# dev notes 
+docs/
+
+# UI streamlit 
+app/backup/

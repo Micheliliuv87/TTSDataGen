@@ -8,7 +8,10 @@ if [ "$#" -lt 1 ]; then
   echo "Usage: bash scripts/run_pipeline.sh \"your dialogue request\" [extra instructions]"
   echo ""
   echo "Optional env vars:"
-  echo "  PIPELINE_MODE=full|draft"
+  echo "  PIPELINE_MODE=draft|full"
+  echo "  PIPELINE_MAX_EXPAND_RETRIES=1"
+  echo ""
+  echo "Developer/debug env vars:"
   echo "  PIPELINE_SKIP_POLISH=1"
   echo "  PIPELINE_SKIP_EXPAND=1"
   exit 1
@@ -21,15 +24,18 @@ EXTRA_INSTRUCTIONS="$*"
 
 MODE="${PIPELINE_MODE:-full}"
 
+MAX_EXPAND_RETRIES="${PIPELINE_MAX_EXPAND_RETRIES:-1}"
+
 mkdir -p logs/pipeline
 TIMESTAMP="$(date +"%Y%m%d_%H%M%S")"
 LOG_PATH="logs/pipeline/pipeline_${TIMESTAMP}.log"
 
 CMD=(
-  python -m run_pipeline
+  python run_pipeline.py
   --query "$QUERY"
   --extra_instructions "$EXTRA_INSTRUCTIONS"
   --mode "$MODE"
+  --max_expand_retries "$MAX_EXPAND_RETRIES"
   --save_prompt
 )
 

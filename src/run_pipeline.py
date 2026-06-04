@@ -330,6 +330,50 @@ def run_validate_dialogue(
 
     return validation_path
 
+def run_expand_and_validate(
+    *,
+    expander_config: Path,
+    dialogue_path: Path,
+    source_anchor_pack_path: Path,
+    validation_report_path: Path,
+    critique_report_path: Path,
+    output_path: Path,
+    save_prompt: bool,
+) -> tuple[Path, Path, Path, Dict[str, Any]]:
+    expand_cmd = [
+        sys.executable,
+        "-m",
+        "src.expand_dialogue",
+        "--config",
+        str(expander_config),
+        "--dialogue",
+        str(dialogue_path),
+        "--source_anchor_pack",
+        str(source_anchor_pack_path),
+        "--validation_report",
+        str(validation_report_path),
+        "--critique_report",
+        str(critique_report_path),
+        "--output_path",
+        str(output_path),
+    ]
+
+    if save_prompt:
+        expand_cmd.append("--save_prompt")
+
+    run_command(expand_cmd)
+
+    meta_path = output_path.with_suffix(".meta.json")
+
+    validation_path = run_validate_dialogue(
+        dialogue_path=output_path,
+        meta_path=meta_path,
+        require_source_appendix=True,
+    )
+
+    validation_summary = summarize_validation(validation_path)
+
+    return output_path, meta_path, validation_path, validation_summary
 
 # ---------------------------------------------------------------------
 # Main
@@ -398,6 +442,15 @@ def main() -> None:
         help="Continue to polish even if expanded dialogue still has quality warnings.",
     )
     parser.add_argument(
+        "--max_expand_retries",
+        type=int,
+        default=1,
+        help=(
+            "Retry expansion this many times if expanded dialogue passes mechanically "
+            "but fails quality checks. Default: 1."
+        ),
+    )
+    parser.add_argument(
         "--allow_polish_quality_fail",
         action="store_true",
         help="Do not fail pipeline if polished dialogue has quality warnings.",
@@ -464,6 +517,7 @@ def main() -> None:
             "allow_empty_anchors": args.allow_empty_anchors,
             "allow_raw_source_fallback": args.allow_raw_source_fallback,
             "allow_expand_quality_fail": args.allow_expand_quality_fail,
+            "max_expand_retries": args.max_expand_retries,
             "allow_polish_quality_fail": args.allow_polish_quality_fail,
             "save_prompt": args.save_prompt,
             "dry_run_prompt": args.dry_run_prompt,
@@ -684,28 +738,17 @@ def main() -> None:
         # -------------------------------------------------------------
 
         if not args.skip_expand:
-            expand_cmd = [
-                sys.executable,
-                "-m",
-                "src.expand_dialogue",
-                "--config",
-                str(args.expander_config),
-                "--dialogue",
-                str(dialogue_path),
-                "--source_anchor_pack",
-                str(source_anchor_pack_path),
-                "--validation_report",
-                str(generated_validation_path),
-                "--critique_report",
-                str(critique_report_path),
-                "--output_path",
-                str(expanded_dialogue_path),
-            ]
-
-            if args.save_prompt:
-                expand_cmd.append("--save_prompt")
-
-            run_command(expand_cmd)
+            expanded_dialogue_path, expanded_meta_path, expanded_validation_path, expanded_validation_summary = (
+                run_expand_and_validate(
+                    expander_config=args.expander_config,
+                    dialogue_path=dialogue_path,
+                    source_anchor_pack_path=source_anchor_pack_path,
+                    validation_report_path=generated_validation_path,
+                    critique_report_path=critique_report_path,
+                    output_path=expanded_dialogue_path,
+                    save_prompt=args.save_prompt,
+                )
+            )
 
             pipeline_meta["stages"]["expand_dialogue"] = {
                 "output_path": str(expanded_dialogue_path),
@@ -713,19 +756,6 @@ def main() -> None:
                 "meta_path": str(expanded_meta_path),
                 "meta_summary": summarize_dialogue_meta(expanded_meta_path),
             }
-            write_json(pipeline_meta_path, pipeline_meta)
-
-            # ---------------------------------------------------------
-            # Stage 7: Validate expanded dialogue
-            # ---------------------------------------------------------
-
-            expanded_validation_path = run_validate_dialogue(
-                dialogue_path=expanded_dialogue_path,
-                meta_path=expanded_meta_path,
-                require_source_appendix=True,
-            )
-
-            expanded_validation_summary = summarize_validation(expanded_validation_path)
             pipeline_meta["stages"]["validate_expanded"] = expanded_validation_summary
             write_json(pipeline_meta_path, pipeline_meta)
 
@@ -736,11 +766,79 @@ def main() -> None:
                 expanded_validation_summary,
                 stage_name="Expanded dialogue",
             )
-            assert_validation_quality_passed(
-                expanded_validation_summary,
-                stage_name="Expanded dialogue",
-                allow_quality_fail=args.allow_expand_quality_fail,
-            )
+
+            expand_retry_count = 0
+
+            while (
+                expanded_validation_summary.get("quality_passed") is not True
+                and expand_retry_count < args.max_expand_retries
+            ):
+                expand_retry_count += 1
+
+                print(
+                    f"\nExpanded dialogue did not pass quality checks. "
+                    f"Retrying expansion {expand_retry_count}/{args.max_expand_retries}..."
+                )
+
+                retry_dialogue_path = Path(
+                    f"outputs/expansions/expanded_dialogue_pipeline_{timestamp}_retry{expand_retry_count}.md"
+                )
+
+                retry_dialogue_path, retry_meta_path, retry_validation_path, retry_validation_summary = (
+                    run_expand_and_validate(
+                        expander_config=args.expander_config,
+                        dialogue_path=expanded_dialogue_path,
+                        source_anchor_pack_path=source_anchor_pack_path,
+                        validation_report_path=expanded_validation_path,
+                        critique_report_path=critique_report_path,
+                        output_path=retry_dialogue_path,
+                        save_prompt=args.save_prompt,
+                    )
+                )
+
+                pipeline_meta["stages"][f"expand_dialogue_retry_{expand_retry_count}"] = {
+                    "input_dialogue": str(expanded_dialogue_path),
+                    "input_validation": str(expanded_validation_path),
+                    "output_path": str(retry_dialogue_path),
+                    "prompt_path": str(retry_dialogue_path.with_suffix(".prompt.json")),
+                    "meta_path": str(retry_meta_path),
+                    "meta_summary": summarize_dialogue_meta(retry_meta_path),
+                }
+                pipeline_meta["stages"][f"validate_expanded_retry_{expand_retry_count}"] = retry_validation_summary
+                write_json(pipeline_meta_path, pipeline_meta)
+
+                print(f"\nExpanded retry {expand_retry_count} validation summary:")
+                print(json.dumps(retry_validation_summary, ensure_ascii=False, indent=2))
+
+                assert_validation_mechanical_passed(
+                    retry_validation_summary,
+                    stage_name=f"Expanded dialogue retry {expand_retry_count}",
+                )
+
+                expanded_dialogue_path = retry_dialogue_path
+                expanded_meta_path = retry_meta_path
+                expanded_validation_path = retry_validation_path
+                expanded_validation_summary = retry_validation_summary
+
+            if expanded_validation_summary.get("quality_passed") is not True:
+                if args.allow_expand_quality_fail:
+                    print(
+                        "\nWarning: Expanded dialogue still did not pass quality checks after retry, "
+                        "but --allow_expand_quality_fail is set. Continuing to polish."
+                    )
+                else:
+                    print(
+                        "\nWarning: Expanded dialogue still did not pass quality checks after retry, "
+                        "but mechanical validation passed. Continuing to polish and letting final "
+                        "polished validation decide the full pipeline result."
+                    )
+
+                pipeline_meta["stages"]["validate_expanded_final"] = {
+                    **expanded_validation_summary,
+                    "expand_retry_count": expand_retry_count,
+                    "continued_to_polish_after_expand_quality_fail": True,
+                }
+                write_json(pipeline_meta_path, pipeline_meta)
 
             current_dialogue_path = expanded_dialogue_path
             current_meta_path = expanded_meta_path

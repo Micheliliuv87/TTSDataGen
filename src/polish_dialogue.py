@@ -913,6 +913,23 @@ def main() -> None:
     validation_report_raw = load_json(args.validation_report)
     validation_report = slim_validation_report(validation_report_raw)
 
+    validation_stats = validation_report_raw.get("stats", {}) or {}
+    if not isinstance(validation_stats, dict):
+        validation_stats = {}
+
+    inherited_rounds = (
+        validation_stats.get("expected_rounds")
+        or validation_stats.get("inferred_rounds")
+    )
+
+    inherited_total_dialogue_lines = (
+        validation_stats.get("expected_total_dialogue_lines")
+        or validation_stats.get("dialogue_line_count")
+        or len(speaker_lines)
+    )
+
+    inherited_source_appendix_present = validation_stats.get("source_appendix_present")
+    
     polish_contract = load_polish_contract(
         config,
         polish_rules_override=args.polish_rules,
@@ -967,6 +984,12 @@ def main() -> None:
                 "created_at": datetime.now().isoformat(timespec="seconds"),
                 "dialogue": str(args.dialogue),
                 "validation_report": str(args.validation_report) if args.validation_report else "",
+                "rounds": inherited_rounds,
+                "total_dialogue_lines": inherited_total_dialogue_lines,
+                "input_expected_rounds": validation_stats.get("expected_rounds"),
+                "input_inferred_rounds": validation_stats.get("inferred_rounds"),
+                "input_expected_total_dialogue_lines": validation_stats.get("expected_total_dialogue_lines"),
+                "input_dialogue_line_count": validation_stats.get("dialogue_line_count"),                
                 "polish_rules_enabled": polish_contract["enabled"],
                 "polish_rules_path": str(polish_contract["path"]),
                 "polish_rule_count": polish_contract["count"],
@@ -1088,6 +1111,13 @@ def main() -> None:
         "validation_report": str(args.validation_report) if args.validation_report else "",
         "output_path": str(output_path),
         "model": polisher_cfg.get("model", "qwen3-32b-mlx"),
+        "rounds": inherited_rounds,
+        "total_dialogue_lines": inherited_total_dialogue_lines,
+        "input_expected_rounds": validation_stats.get("expected_rounds"),
+        "input_inferred_rounds": validation_stats.get("inferred_rounds"),
+        "input_expected_total_dialogue_lines": validation_stats.get("expected_total_dialogue_lines"),
+        "input_dialogue_line_count": validation_stats.get("dialogue_line_count"),
+        "input_source_appendix_present": inherited_source_appendix_present,
         "source_appendix_present_in_original": bool(split["appendix_present"]),
         "source_appendix_preserved": bool(split["appendix_present"]) and not args.no_source_appendix,
         "source_appendix_chars": source_appendix_chars,
