@@ -17,7 +17,7 @@ import streamlit as st
 APP_PATH = Path(__file__).resolve()
 PROJECT_ROOT = APP_PATH.parents[1]
 
-APP_NAME = "TTSDataGen V0.2.2"
+APP_NAME = "TTSDataGen V0.2"
 REPO_URL = "https://github.com/Micheliliuv87/TTSDataGen"
 CONTACT_URL = "https://micheliliuv87.github.io/"
 LICENSE_NAME = "TTSDataGen License - Non-Commercial, All Rights Reserved"
