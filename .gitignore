@@ -31,14 +31,7 @@ data/feedback/
 vector_db/
 
 # Outputs
-outputs/dialogues/
-outputs/source_packs/
-outputs/evaluations/
-outputs/critiques/
-outputs/revisions/
-outputs/pipeline_runs/
-outputs/expansions/
-outputs/polishes/
+outputs/
 
 # Model / HF caches if accidentally placed in project
 .cache/
@@ -47,6 +40,7 @@ models/
 
 # Src local experiments
 src/legacy/
+src/backup/
 
 # dev notes 
 docs/
