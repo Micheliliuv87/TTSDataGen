@@ -222,6 +222,125 @@ def path_from_meta(meta: Dict[str, Any], *keys: str) -> Optional[Path]:
     return PROJECT_ROOT / path
 
 
+def resolve_display_artifact(pipeline_meta: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Pick the best available artifact to display in the UI.
+
+    Important:
+    - pipeline_meta["final"] is only populated when the full pipeline succeeds.
+    - If final validation fails, polished/expanded/generated files may still exist.
+    - The UI should show the best available artifact with a clear warning.
+    """
+    final = pipeline_meta.get("final", {}) or {}
+    stages = pipeline_meta.get("stages", {}) or {}
+    paths = pipeline_meta.get("paths", {}) or {}
+
+    # 1. Success path: official final artifact.
+    final_dialogue = final.get("dialogue")
+    if final_dialogue:
+        return {
+            "stage": final.get("stage", "final"),
+            "dialogue_path": final_dialogue,
+            "validation_path": final.get("validation", ""),
+            "meta_path": final.get("meta", ""),
+            "is_official_final": True,
+            "status_label": "最终通过版本",
+            "warning": "",
+        }
+
+    # 2. Failed path: polished output exists but final quality check failed.
+    polish_stage = stages.get("polish_dialogue", {}) or {}
+    polished_dialogue = (
+        polish_stage.get("output_path")
+        or paths.get("polished_dialogue")
+    )
+    polished_validation = (
+        stages.get("validate_polished", {}) or {}
+    ).get("path") or paths.get("polished_validation")
+
+    if polished_dialogue:
+        return {
+            "stage": "polished_dialogue",
+            "dialogue_path": polished_dialogue,
+            "validation_path": polished_validation or "",
+            "meta_path": polish_stage.get("meta_path", ""),
+            "is_official_final": False,
+            "status_label": "已生成但未通过最终质量检查",
+            "warning": (
+                "Pipeline 最终质量检查未通过，但 polished markdown 已经生成。"
+                "下面展示的是可检查的候选输出，不是正式通过版本。"
+            ),
+        }
+
+    # 3. Fallback: expanded output.
+    expanded_stage = stages.get("expand_dialogue_retry_1") or stages.get("expand_dialogue") or {}
+    expanded_dialogue = (
+        expanded_stage.get("output_path")
+        or paths.get("expanded_dialogue")
+    )
+    expanded_validation = (
+        stages.get("validate_expanded_retry_1", {}) or stages.get("validate_expanded", {}) or {}
+    ).get("path") or paths.get("expanded_validation")
+
+    if expanded_dialogue:
+        return {
+            "stage": "expanded_dialogue",
+            "dialogue_path": expanded_dialogue,
+            "validation_path": expanded_validation or "",
+            "meta_path": expanded_stage.get("meta_path", ""),
+            "is_official_final": False,
+            "status_label": "中间扩写版本",
+            "warning": (
+                "Pipeline 没有产出正式 final 版本。下面展示的是 expanded 中间版本，"
+                "需要人工检查。"
+            ),
+        }
+
+    # 4. Fallback: generated draft.
+    generated_stage = stages.get("generate_dialogue", {}) or {}
+    generated_dialogue = (
+        generated_stage.get("output_path")
+        or paths.get("generated_dialogue")
+    )
+    generated_validation = (
+        stages.get("validate_generated", {}) or {}
+    ).get("path") or paths.get("generated_validation")
+
+    if generated_dialogue:
+        return {
+            "stage": "generated_dialogue",
+            "dialogue_path": generated_dialogue,
+            "validation_path": generated_validation or "",
+            "meta_path": generated_stage.get("meta_path", ""),
+            "is_official_final": False,
+            "status_label": "初稿版本",
+            "warning": (
+                "Pipeline 没有产出正式 final 版本。下面展示的是 generated 初稿，"
+                "通常还需要扩写或润色。"
+            ),
+        }
+
+    return {
+        "stage": "none",
+        "dialogue_path": "",
+        "validation_path": "",
+        "meta_path": "",
+        "is_official_final": False,
+        "status_label": "没有可展示输出",
+        "warning": "没有找到 generated / expanded / polished markdown 输出。",
+    }
+
+
+def resolve_project_path(path_value: Any) -> Optional[Path]:
+    if not path_value:
+        return None
+
+    path = Path(str(path_value))
+    if path.is_absolute():
+        return path
+
+    return PROJECT_ROOT / path
+
 def extract_pipeline_meta_path(log_text: str) -> Optional[Path]:
     patterns = [
         r"Pipeline meta:\s+(.+?\.json)",
@@ -370,7 +489,8 @@ with st.sidebar:
         st.info(
             "Full 模式会经过检索、生成、校验、扩写、重试和润色，"
             "会多次调用本地模型。30轮可能需要 20–30 分钟或更久；"
-            "轮数越多越慢。V0.2 阶段建议先用 12–20 轮试跑，确认方向后再生成 30 轮。"
+            "轮数越多越慢。V0.2 阶段建议先用 12–20 轮试跑，确认方向后再生成 30 轮。\n"
+            "建议输入更具体的主题，输入内容🈷越具体，生成质量越好"
         )
     else:
         st.info(
@@ -464,11 +584,11 @@ pipeline_meta_path = Path(pipeline_meta_path_raw) if pipeline_meta_path_raw else
 
 if pipeline_meta_path and pipeline_meta_path.exists():
     pipeline_meta = load_json(pipeline_meta_path)
-    final = pipeline_meta.get("final", {}) or {}
+    display_artifact = resolve_display_artifact(pipeline_meta)
 
-    final_dialogue_path = path_from_meta(pipeline_meta, "final", "dialogue")
-    final_validation_path = path_from_meta(pipeline_meta, "final", "validation")
-    final_meta_path = path_from_meta(pipeline_meta, "final", "meta")
+    final_dialogue_path = resolve_project_path(display_artifact.get("dialogue_path"))
+    final_validation_path = resolve_project_path(display_artifact.get("validation_path"))
+    final_meta_path = resolve_project_path(display_artifact.get("meta_path"))
 
     final_dialogue = read_text(final_dialogue_path)
     final_validation = load_json(final_validation_path) if final_validation_path else {}
@@ -477,10 +597,25 @@ if pipeline_meta_path and pipeline_meta_path.exists():
     st.divider()
     st.subheader("生成结果")
 
+    if display_artifact.get("warning"):
+        st.warning(display_artifact["warning"])
+
+    pipeline_status = pipeline_meta.get("status", "unknown")
+    if pipeline_status == "success":
+        st.success("Pipeline 已成功完成，当前展示的是最终通过版本。")
+    elif pipeline_status == "failed":
+        st.error("Pipeline 最终状态为 failed。当前展示的是已生成的最佳候选输出。")
+        st.info(
+                "建议：如果候选输出已经可用，可以直接下载；如果希望通过质量门槛，"
+                "可以减少轮数、换更具体的主题，或重新运行 Full 模式。"
+            )
+    else:
+        st.info(f"Pipeline status: {pipeline_status}")
+    
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        st.metric("最终阶段", final.get("stage", "unknown"))
+        st.metric("展示版本", display_artifact.get("status_label", "unknown"))
 
     with col2:
         st.metric("质量", validation_badge(final_validation))
@@ -515,6 +650,9 @@ if pipeline_meta_path and pipeline_meta_path.exists():
                     "stats": final_validation.get("stats", {}),
                 },
                 "paths": {
+                    "display_stage": display_artifact.get("stage", ""),
+                    "display_status_label": display_artifact.get("status_label", ""),
+                    "is_official_final": display_artifact.get("is_official_final", False),
                     "dialogue": str(final_dialogue_path) if final_dialogue_path else "",
                     "validation": str(final_validation_path) if final_validation_path else "",
                     "meta": str(final_meta_path) if final_meta_path else "",
@@ -548,7 +686,11 @@ if pipeline_meta_path and pipeline_meta_path.exists():
         st.download_button(
             "下载 Markdown",
             data=final_dialogue,
-            file_name=final_dialogue_path.name if final_dialogue_path else "dialogue.md",
+            file_name=(
+                final_dialogue_path.name
+                if display_artifact.get("is_official_final")
+                else f"candidate_{final_dialogue_path.name}"
+            ) if final_dialogue_path else "dialogue.md",
             mime="text/markdown",
             use_container_width=True,
         )
