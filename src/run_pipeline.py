@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -207,6 +208,349 @@ def summarize_critique(path: Path) -> Dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------
+# Pipeline result contract for UIs / wrappers
+# ---------------------------------------------------------------------
+
+
+def path_exists(path_value: Any) -> bool:
+    if not path_value:
+        return False
+
+    try:
+        return Path(str(path_value)).exists()
+    except OSError:
+        return False
+
+
+def validation_status_from_summary(validation_summary: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(validation_summary, dict) or not validation_summary:
+        return {
+            "passed": None,
+            "mechanical_passed": None,
+            "quality_passed": None,
+            "needs_rewrite": None,
+            "verdict": "",
+        }
+
+    return {
+        "passed": validation_summary.get("passed"),
+        "mechanical_passed": validation_summary.get("mechanical_passed"),
+        "quality_passed": validation_summary.get("quality_passed"),
+        "needs_rewrite": validation_summary.get("needs_rewrite"),
+        "verdict": validation_summary.get("verdict", ""),
+    }
+
+
+def make_display_artifact(
+    *,
+    stage: str,
+    dialogue_path: Any,
+    meta_path: Any = "",
+    validation_path: Any = "",
+    validation_summary: Optional[Dict[str, Any]] = None,
+    is_official_final: bool = False,
+    status_label: str,
+    warning: str = "",
+    reason: str = "",
+) -> Dict[str, Any]:
+    validation_summary = validation_summary or {}
+
+    return {
+        "stage": stage,
+        "dialogue": str(dialogue_path) if dialogue_path else "",
+        "meta": str(meta_path) if meta_path else "",
+        "validation": str(validation_path) if validation_path else "",
+        "is_official_final": is_official_final,
+        "status_label": status_label,
+        "warning": warning,
+        "reason": reason,
+        **validation_status_from_summary(validation_summary),
+    }
+
+
+def latest_expanded_candidate_stage(stages: Dict[str, Any]) -> tuple[str, Dict[str, Any], Dict[str, Any]]:
+    retry_indices: List[int] = []
+    for key in stages:
+        match = re.fullmatch(r"expand_dialogue_retry_(\d+)", key)
+        if match:
+            retry_indices.append(int(match.group(1)))
+
+    for idx in sorted(retry_indices, reverse=True):
+        stage_key = f"expand_dialogue_retry_{idx}"
+        validation_key = f"validate_expanded_retry_{idx}"
+        stage = stages.get(stage_key, {}) or {}
+        validation = stages.get(validation_key, {}) or {}
+        if stage.get("output_path") or path_exists(stage.get("output_path")):
+            return stage_key, stage, validation
+
+    stage = stages.get("expand_dialogue", {}) or {}
+    validation = stages.get("validate_expanded", {}) or {}
+    return "expand_dialogue", stage, validation
+
+
+def choose_display_artifact(pipeline_meta: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Select the best artifact that downstream UIs should display.
+
+    This keeps UI code simple: the pipeline owns artifact precedence and
+    status semantics. UI layers should not have to guess whether polished,
+    expanded, or generated output exists after a failed run.
+    """
+    final = pipeline_meta.get("final", {}) or {}
+    stages = pipeline_meta.get("stages", {}) or {}
+    paths = pipeline_meta.get("paths", {}) or {}
+
+    final_dialogue = final.get("dialogue")
+    if final_dialogue:
+        final_stage = str(final.get("stage") or "final")
+        validation_path = final.get("validation", "")
+        validation_summary = {}
+        if final_stage == "generated_dialogue":
+            validation_summary = stages.get("validate_generated", {}) or {}
+        elif final_stage == "expanded_dialogue":
+            _, _, validation_summary = latest_expanded_candidate_stage(stages)
+        elif final_stage == "polished_dialogue":
+            validation_summary = stages.get("validate_polished", {}) or {}
+
+        return make_display_artifact(
+            stage=final_stage,
+            dialogue_path=final_dialogue,
+            meta_path=final.get("meta", ""),
+            validation_path=validation_path,
+            validation_summary=validation_summary,
+            is_official_final=True,
+            status_label="最终通过版本",
+            reason="pipeline_success_final",
+        )
+
+    polish_stage = stages.get("polish_dialogue", {}) or {}
+    polished_dialogue = polish_stage.get("output_path")
+    if not polished_dialogue and path_exists(paths.get("polished_dialogue")):
+        polished_dialogue = paths.get("polished_dialogue")
+
+    if polished_dialogue:
+        polished_validation = (
+            (stages.get("validate_polished", {}) or {}).get("path")
+            or paths.get("polished_validation")
+        )
+        return make_display_artifact(
+            stage="polished_dialogue",
+            dialogue_path=polished_dialogue,
+            meta_path=polish_stage.get("meta_path", ""),
+            validation_path=polished_validation or "",
+            validation_summary=stages.get("validate_polished", {}) or {},
+            is_official_final=False,
+            status_label="已生成但未通过最终质量检查",
+            warning=(
+                "Pipeline 最终质量检查未通过，但 polished markdown 已经生成。"
+                "下面展示的是可检查的候选输出，不是正式通过版本。"
+            ),
+            reason="polished_candidate_available",
+        )
+
+    expanded_stage_key, expanded_stage, expanded_validation_summary = latest_expanded_candidate_stage(stages)
+    expanded_dialogue = expanded_stage.get("output_path")
+    if not expanded_dialogue and path_exists(paths.get("expanded_dialogue")):
+        expanded_dialogue = paths.get("expanded_dialogue")
+
+    if expanded_dialogue:
+        expanded_validation = (
+            expanded_validation_summary.get("path")
+            or paths.get("expanded_validation")
+        )
+        return make_display_artifact(
+            stage="expanded_dialogue",
+            dialogue_path=expanded_dialogue,
+            meta_path=expanded_stage.get("meta_path", ""),
+            validation_path=expanded_validation or "",
+            validation_summary=expanded_validation_summary,
+            is_official_final=False,
+            status_label="中间扩写版本",
+            warning=(
+                "Pipeline 没有产出正式 final 版本。下面展示的是 expanded 中间版本，"
+                "需要人工检查。"
+            ),
+            reason=f"{expanded_stage_key}_candidate_available",
+        )
+
+    generated_stage = stages.get("generate_dialogue", {}) or {}
+    generated_dialogue = generated_stage.get("output_path")
+    if not generated_dialogue and path_exists(paths.get("generated_dialogue")):
+        generated_dialogue = paths.get("generated_dialogue")
+
+    if generated_dialogue:
+        generated_validation = (
+            (stages.get("validate_generated", {}) or {}).get("path")
+            or paths.get("generated_validation")
+        )
+        return make_display_artifact(
+            stage="generated_dialogue",
+            dialogue_path=generated_dialogue,
+            meta_path=generated_stage.get("meta_path", ""),
+            validation_path=generated_validation or "",
+            validation_summary=stages.get("validate_generated", {}) or {},
+            is_official_final=False,
+            status_label="初稿版本",
+            warning=(
+                "Pipeline 没有产出正式 final 版本。下面展示的是 generated 初稿，"
+                "通常还需要扩写或润色。"
+            ),
+            reason="generated_candidate_available",
+        )
+
+    return make_display_artifact(
+        stage="none",
+        dialogue_path="",
+        status_label="没有可展示输出",
+        warning="没有找到 generated / expanded / polished markdown 输出。",
+        reason="no_dialogue_artifact_available",
+    )
+
+
+def build_source_quality_summary(pipeline_meta: Dict[str, Any]) -> Dict[str, Any]:
+    stages = pipeline_meta.get("stages", {}) or {}
+    retrieve = stages.get("retrieve", {}) or {}
+    anchor = stages.get("build_source_anchor_pack", {}) or {}
+
+    coverage_status = str(retrieve.get("coverage_status") or "").lower()
+    usable_source_count = int(retrieve.get("usable_source_count") or 0)
+    strong_source_count = int(retrieve.get("strong_source_count") or 0)
+    anchor_count = int(anchor.get("anchor_count") or 0)
+    rejected_anchor_count = int(anchor.get("rejected_anchor_count") or 0)
+
+    if coverage_status in {"high", "strong"} or strong_source_count > 0:
+        level = "较高"
+        message = "系统找到了较强相关素材，适合直接生成。"
+    elif coverage_status == "medium" or usable_source_count >= 3 or anchor_count > 0:
+        level = "中等"
+        message = "结果可以生成，但素材可能不完全贴合主题，生成内容可能需要扩写或存在轻微噪声。"
+    else:
+        level = "较低"
+        message = "当前数据库中相关素材不足。建议输入更具体的主题，或补充更多 source 数据。"
+
+    return {
+        "level": level,
+        "message": message,
+        "coverage_status": coverage_status or "unknown",
+        "usable_source_count": usable_source_count,
+        "strong_source_count": strong_source_count,
+        "anchor_count": anchor_count,
+        "rejected_anchor_count": rejected_anchor_count,
+    }
+
+
+def build_ui_summary(pipeline_meta: Dict[str, Any]) -> Dict[str, Any]:
+    status = str(pipeline_meta.get("status") or "running")
+    artifact = pipeline_meta.get("display_artifact", {}) or {}
+    source_quality = pipeline_meta.get("source_quality", {}) or {}
+
+    has_artifact = bool(artifact.get("dialogue"))
+    quality_passed = artifact.get("quality_passed")
+    mechanical_passed = artifact.get("mechanical_passed")
+
+    if status == "running":
+        severity = "info"
+        message = "Pipeline 正在运行。页面可以刷新或重新打开，当前任务会通过 pipeline_meta 和 UI job 文件恢复。"
+    elif status == "cancelled":
+        severity = "warning"
+        message = "Pipeline 已被用户取消。"
+    elif status == "success":
+        severity = "success"
+        message = "Pipeline 已成功完成，当前展示的是最终通过版本。"
+    elif has_artifact:
+        severity = "warning"
+        message = "Pipeline 最终检查未通过，但已生成候选输出，可以人工检查或下载。"
+    elif source_quality.get("anchor_count", 0) == 0:
+        severity = "error"
+        message = "素材匹配度较低：当前数据库没有找到足够可靠的 source anchors，因此已停止生成。"
+    else:
+        severity = "error"
+        message = "Pipeline 运行失败，且没有找到可展示的 dialogue artifact。请查看日志。"
+
+    return {
+        "status": status,
+        "severity": severity,
+        "message": message,
+        "has_display_artifact": has_artifact,
+        "display_stage": artifact.get("stage", "none"),
+        "display_status_label": artifact.get("status_label", ""),
+        "mechanical_passed": mechanical_passed,
+        "quality_passed": quality_passed,
+    }
+
+
+def refresh_pipeline_meta_derived_fields(pipeline_meta: Dict[str, Any]) -> None:
+    source_quality = build_source_quality_summary(pipeline_meta)
+    display_artifact = choose_display_artifact(pipeline_meta)
+
+    pipeline_meta["source_quality"] = source_quality
+    pipeline_meta["display_artifact"] = display_artifact
+    # Backward-compatible alias for older UI experiments.
+    pipeline_meta["best_available_artifact"] = display_artifact
+    pipeline_meta["ui_summary"] = build_ui_summary(pipeline_meta)
+
+
+def write_pipeline_meta(path: Path, pipeline_meta: Dict[str, Any]) -> None:
+    refresh_pipeline_meta_derived_fields(pipeline_meta)
+    write_json(path, pipeline_meta)
+
+
+def set_progress(
+    pipeline_meta: Dict[str, Any],
+    *,
+    stage: str,
+    percent: int,
+    label: str,
+    detail: str = "",
+) -> None:
+    bounded_percent = max(0, min(100, int(percent)))
+    pipeline_meta["progress"] = {
+        "stage": stage,
+        "percent": bounded_percent,
+        "label": label,
+        "detail": detail,
+        "is_estimated": True,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def update_progress(
+    path: Path,
+    pipeline_meta: Dict[str, Any],
+    *,
+    stage: str,
+    percent: int,
+    label: str,
+    detail: str = "",
+) -> None:
+    set_progress(
+        pipeline_meta,
+        stage=stage,
+        percent=percent,
+        label=label,
+        detail=detail,
+    )
+    write_pipeline_meta(path, pipeline_meta)
+    print(f"\nProgress: {max(0, min(100, int(percent)))}% - {label}", flush=True)
+    if detail:
+        print(f"Progress detail: {detail}", flush=True)
+
+
+def print_pipeline_footer(*, status: str, pipeline_meta_path: Path, pipeline_meta: Dict[str, Any]) -> None:
+    refresh_pipeline_meta_derived_fields(pipeline_meta)
+    artifact = pipeline_meta.get("display_artifact", {}) or {}
+    ui_summary = pipeline_meta.get("ui_summary", {}) or {}
+
+    print(f"\nPipeline result:    {status}")
+
+    print(f"Pipeline meta:      {pipeline_meta_path}")
+    print(f"Display stage:      {artifact.get('stage', 'none')}")
+    print(f"Display dialogue:   {artifact.get('dialogue', '')}")
+    print(f"Display validation: {artifact.get('validation', '')}")
+    print(f"UI message:         {ui_summary.get('message', '')}")
+
+
 def assert_retrieval_has_sources(source_summary: Dict[str, Any], *, allow_empty_sources: bool) -> None:
     if allow_empty_sources:
         return
@@ -404,6 +748,15 @@ def main() -> None:
     parser.add_argument("--rounds", type=int, default=None)
     parser.add_argument("--turns", type=int, default=None)
     parser.add_argument("--language", type=str, default=None)
+    parser.add_argument(
+        "--run_id",
+        type=str,
+        default=None,
+        help=(
+            "Optional stable run id used for output filenames, usually YYYYMMDD_HHMMSS. "
+            "This is mainly for UI wrappers that need to know paths before the pipeline finishes."
+        ),
+    )
 
     parser.add_argument(
         "--skip_critique",
@@ -463,7 +816,15 @@ def main() -> None:
 
     ensure_dirs()
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if args.run_id:
+        run_id = args.run_id.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", run_id):
+            raise ValueError(
+                "--run_id may only contain letters, numbers, underscores, and hyphens."
+            )
+        timestamp = run_id
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     source_pack_path = Path(f"outputs/source_packs/source_pack_pipeline_{timestamp}.json")
     source_anchor_pack_path = Path(f"outputs/source_packs/source_anchor_pack_pipeline_{timestamp}.json")
@@ -485,7 +846,10 @@ def main() -> None:
 
     pipeline_meta: Dict[str, Any] = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
+        "started_at": datetime.now().isoformat(timespec="seconds"),
         "timestamp": timestamp,
+        "run_id": timestamp,
+        "status": "running",
         "mode": args.mode,
         "query": args.query,
         "extra_instructions": args.extra_instructions,
@@ -526,10 +890,33 @@ def main() -> None:
         "final": {},
     }
 
+    # Write an initial running meta file before any expensive stage starts.
+    # This lets Streamlit or future UIs reconnect after a refresh or mobile tab switch.
+    update_progress(
+        pipeline_meta_path,
+        pipeline_meta,
+        stage="queued",
+        percent=0,
+        label="任务已创建",
+        detail="等待开始检索素材。",
+    )
+    print("\nPipeline started.")
+    print(f"Run ID:             {timestamp}")
+    print(f"Pipeline meta:      {pipeline_meta_path}")
+
     try:
         # -------------------------------------------------------------
         # Stage 1: Retrieve
         # -------------------------------------------------------------
+
+        update_progress(
+            pipeline_meta_path,
+            pipeline_meta,
+            stage="retrieve",
+            percent=5,
+            label="正在检索相关素材",
+            detail="根据用户输入检索 podcast source pack。",
+        )
 
         retrieve_cmd = [
             sys.executable,
@@ -547,7 +934,14 @@ def main() -> None:
 
         source_summary = summarize_source_pack(source_pack_path)
         pipeline_meta["stages"]["retrieve"] = source_summary
-        write_json(pipeline_meta_path, pipeline_meta)
+        update_progress(
+            pipeline_meta_path,
+            pipeline_meta,
+            stage="retrieve_done",
+            percent=12,
+            label="素材检索完成",
+            detail="已生成 source pack，准备筛选 source anchors。",
+        )
 
         print("\nRetrieve summary:")
         print(json.dumps(source_summary, ensure_ascii=False, indent=2))
@@ -560,6 +954,15 @@ def main() -> None:
         # -------------------------------------------------------------
         # Stage 2: Build source anchor pack
         # -------------------------------------------------------------
+
+        update_progress(
+            pipeline_meta_path,
+            pipeline_meta,
+            stage="build_source_anchor_pack",
+            percent=15,
+            label="正在筛选核心素材片段",
+            detail="从检索结果中选择可用于生成的 source anchors。",
+        )
 
         build_anchor_cmd = [
             sys.executable,
@@ -577,7 +980,14 @@ def main() -> None:
 
         anchor_summary = summarize_anchor_pack(source_anchor_pack_path)
         pipeline_meta["stages"]["build_source_anchor_pack"] = anchor_summary
-        write_json(pipeline_meta_path, pipeline_meta)
+        update_progress(
+            pipeline_meta_path,
+            pipeline_meta,
+            stage="build_source_anchor_pack_done",
+            percent=22,
+            label="核心素材筛选完成",
+            detail="已生成 source anchor pack，准备生成初稿。",
+        )
 
         print("\nSource anchor summary:")
         print(json.dumps(anchor_summary, ensure_ascii=False, indent=2))
@@ -590,6 +1000,15 @@ def main() -> None:
         # -------------------------------------------------------------
         # Stage 3: Generate dialogue
         # -------------------------------------------------------------
+
+        update_progress(
+            pipeline_meta_path,
+            pipeline_meta,
+            stage="generate_dialogue",
+            percent=28,
+            label="正在生成初稿",
+            detail="本阶段会调用本地大模型，可能需要较长时间。",
+        )
 
         generate_cmd = [
             sys.executable,
@@ -633,24 +1052,41 @@ def main() -> None:
             "meta_path": str(dialogue_meta_path),
             "meta_summary": summarize_dialogue_meta(dialogue_meta_path),
         }
-        write_json(pipeline_meta_path, pipeline_meta)
+        update_progress(
+            pipeline_meta_path,
+            pipeline_meta,
+            stage="generate_dialogue_done",
+            percent=40,
+            label="初稿生成完成",
+            detail="准备检查初稿格式和内容密度。",
+        )
 
         if args.dry_run_prompt:
             pipeline_meta["status"] = "dry_run_prompt"
+            pipeline_meta["finished_at"] = datetime.now().isoformat(timespec="seconds")
             pipeline_meta["final"] = {
                 "stage": "generate_dialogue_prompt",
                 "prompt_path": str(dialogue_path.with_suffix(".prompt.json")),
                 "pipeline_meta": str(pipeline_meta_path),
             }
-            write_json(pipeline_meta_path, pipeline_meta)
+            write_pipeline_meta(pipeline_meta_path, pipeline_meta)
             print("\nDry-run prompt completed.")
             print(f"Prompt:        {dialogue_path.with_suffix('.prompt.json')}")
-            print(f"Pipeline meta: {pipeline_meta_path}")
+            print_pipeline_footer(status="dry_run_prompt", pipeline_meta_path=pipeline_meta_path, pipeline_meta=pipeline_meta)
             return
 
         # -------------------------------------------------------------
         # Stage 4: Validate generated dialogue
         # -------------------------------------------------------------
+
+        update_progress(
+            pipeline_meta_path,
+            pipeline_meta,
+            stage="validate_generated",
+            percent=43,
+            label="正在校验初稿",
+            detail="检查轮数、A/B 格式、Source Appendix 和基础质量指标。",
+        )
 
         generated_validation_path = run_validate_dialogue(
             dialogue_path=dialogue_path,
@@ -660,7 +1096,14 @@ def main() -> None:
 
         generated_validation_summary = summarize_validation(generated_validation_path)
         pipeline_meta["stages"]["validate_generated"] = generated_validation_summary
-        write_json(pipeline_meta_path, pipeline_meta)
+        update_progress(
+            pipeline_meta_path,
+            pipeline_meta,
+            stage="validate_generated_done",
+            percent=46,
+            label="初稿校验完成",
+            detail="准备进入 critique / expand 阶段。",
+        )
 
         print("\nGenerated validation summary:")
         print(json.dumps(generated_validation_summary, ensure_ascii=False, indent=2))
@@ -672,6 +1115,7 @@ def main() -> None:
 
         if args.mode == "draft":
             pipeline_meta["status"] = "success"
+            pipeline_meta["finished_at"] = datetime.now().isoformat(timespec="seconds")
             pipeline_meta["final"] = {
                 "stage": "generated_dialogue",
                 "dialogue": str(dialogue_path),
@@ -679,14 +1123,21 @@ def main() -> None:
                 "quality_passed": generated_validation_summary.get("quality_passed"),
                 "pipeline_meta": str(pipeline_meta_path),
             }
-            write_json(pipeline_meta_path, pipeline_meta)
+            update_progress(
+                pipeline_meta_path,
+                pipeline_meta,
+                stage="completed",
+                percent=100,
+                label="快速草稿生成完成",
+                detail="Draft pipeline 已完成。",
+            )
 
             print("\nDraft pipeline completed successfully.")
             print(f"Source pack:        {source_pack_path}")
             print(f"Source anchor pack: {source_anchor_pack_path}")
             print(f"Dialogue:           {dialogue_path}")
             print(f"Validation:         {generated_validation_path}")
-            print(f"Pipeline meta:      {pipeline_meta_path}")
+            print_pipeline_footer(status="success", pipeline_meta_path=pipeline_meta_path, pipeline_meta=pipeline_meta)
             return
 
         # -------------------------------------------------------------
@@ -699,6 +1150,15 @@ def main() -> None:
         current_stage = "generated_dialogue"
 
         if not args.skip_critique and not args.skip_expand:
+            update_progress(
+                pipeline_meta_path,
+                pipeline_meta,
+                stage="critique_generated",
+                percent=52,
+                label="正在分析初稿问题",
+                detail="Critique agent 正在检查内容密度、自然度和素材使用。",
+            )
+
             critique_cmd = [
                 sys.executable,
                 "-m",
@@ -723,7 +1183,14 @@ def main() -> None:
 
             critique_summary = summarize_critique(critique_report_path)
             pipeline_meta["stages"]["critique_generated"] = critique_summary
-            write_json(pipeline_meta_path, pipeline_meta)
+            update_progress(
+                pipeline_meta_path,
+                pipeline_meta,
+                stage="critique_generated_done",
+                percent=58,
+                label="初稿分析完成",
+                detail="准备根据 critique 进行扩写。",
+            )
 
             print("\nCritique summary:")
             print(json.dumps(critique_summary, ensure_ascii=False, indent=2))
@@ -738,6 +1205,15 @@ def main() -> None:
         # -------------------------------------------------------------
 
         if not args.skip_expand:
+            update_progress(
+                pipeline_meta_path,
+                pipeline_meta,
+                stage="expand_dialogue",
+                percent=62,
+                label="正在扩写对话",
+                detail="Expander 会根据校验报告和 critique 增加内容密度。",
+            )
+
             expanded_dialogue_path, expanded_meta_path, expanded_validation_path, expanded_validation_summary = (
                 run_expand_and_validate(
                     expander_config=args.expander_config,
@@ -757,7 +1233,14 @@ def main() -> None:
                 "meta_summary": summarize_dialogue_meta(expanded_meta_path),
             }
             pipeline_meta["stages"]["validate_expanded"] = expanded_validation_summary
-            write_json(pipeline_meta_path, pipeline_meta)
+            update_progress(
+                pipeline_meta_path,
+                pipeline_meta,
+                stage="expand_dialogue_done",
+                percent=72,
+                label="扩写与校验完成",
+                detail="正在判断是否需要扩写重试。",
+            )
 
             print("\nExpanded validation summary:")
             print(json.dumps(expanded_validation_summary, ensure_ascii=False, indent=2))
@@ -778,6 +1261,14 @@ def main() -> None:
                 print(
                     f"\nExpanded dialogue did not pass quality checks. "
                     f"Retrying expansion {expand_retry_count}/{args.max_expand_retries}..."
+                )
+                update_progress(
+                    pipeline_meta_path,
+                    pipeline_meta,
+                    stage=f"expand_dialogue_retry_{expand_retry_count}",
+                    percent=min(82, 72 + expand_retry_count * 4),
+                    label=f"正在进行扩写重试 {expand_retry_count}/{args.max_expand_retries}",
+                    detail="上一版扩写未完全通过质量检查，正在尝试补足内容密度。",
                 )
 
                 retry_dialogue_path = Path(
@@ -805,7 +1296,14 @@ def main() -> None:
                     "meta_summary": summarize_dialogue_meta(retry_meta_path),
                 }
                 pipeline_meta["stages"][f"validate_expanded_retry_{expand_retry_count}"] = retry_validation_summary
-                write_json(pipeline_meta_path, pipeline_meta)
+                update_progress(
+                    pipeline_meta_path,
+                    pipeline_meta,
+                    stage=f"expand_dialogue_retry_{expand_retry_count}_done",
+                    percent=min(84, 76 + expand_retry_count * 4),
+                    label=f"扩写重试 {expand_retry_count} 完成",
+                    detail="准备继续判断是否进入润色阶段。",
+                )
 
                 print(f"\nExpanded retry {expand_retry_count} validation summary:")
                 print(json.dumps(retry_validation_summary, ensure_ascii=False, indent=2))
@@ -838,7 +1336,14 @@ def main() -> None:
                     "expand_retry_count": expand_retry_count,
                     "continued_to_polish_after_expand_quality_fail": True,
                 }
-                write_json(pipeline_meta_path, pipeline_meta)
+                update_progress(
+                    pipeline_meta_path,
+                    pipeline_meta,
+                    stage="validate_expanded_final",
+                    percent=84,
+                    label="扩写阶段结束",
+                    detail="扩写仍有质量提醒，但格式通过，继续交给润色和最终校验。",
+                )
 
             current_dialogue_path = expanded_dialogue_path
             current_meta_path = expanded_meta_path
@@ -850,6 +1355,15 @@ def main() -> None:
         # -------------------------------------------------------------
 
         if not args.skip_polish:
+            update_progress(
+                pipeline_meta_path,
+                pipeline_meta,
+                stage="polish_dialogue",
+                percent=88,
+                label="正在润色对话",
+                detail="Polisher 正在优化语言自然度和重复表达。",
+            )
+
             if current_stage == "generated_dialogue":
                 polished_dialogue_path = Path(f"outputs/polishes/polished_dialogue_pipeline_{timestamp}.md")
                 polished_meta_path = polished_dialogue_path.with_suffix(".meta.json")
@@ -882,11 +1396,27 @@ def main() -> None:
                 "meta_path": str(polished_meta_path),
                 "meta_summary": summarize_dialogue_meta(polished_meta_path),
             }
-            write_json(pipeline_meta_path, pipeline_meta)
+            update_progress(
+                pipeline_meta_path,
+                pipeline_meta,
+                stage="polish_dialogue_done",
+                percent=94,
+                label="润色完成",
+                detail="准备进行最终质量校验。",
+            )
 
             # ---------------------------------------------------------
             # Stage 9: Validate polished dialogue
             # ---------------------------------------------------------
+
+            update_progress(
+                pipeline_meta_path,
+                pipeline_meta,
+                stage="validate_polished",
+                percent=96,
+                label="正在最终校验",
+                detail="检查 polished dialogue 是否满足最终质量门槛。",
+            )
 
             polished_validation_path = run_validate_dialogue(
                 dialogue_path=polished_dialogue_path,
@@ -896,7 +1426,14 @@ def main() -> None:
 
             polished_validation_summary = summarize_validation(polished_validation_path)
             pipeline_meta["stages"]["validate_polished"] = polished_validation_summary
-            write_json(pipeline_meta_path, pipeline_meta)
+            update_progress(
+                pipeline_meta_path,
+                pipeline_meta,
+                stage="validate_polished_done",
+                percent=98,
+                label="最终校验完成",
+                detail="正在写入最终结果。",
+            )
 
             print("\nPolished validation summary:")
             print(json.dumps(polished_validation_summary, ensure_ascii=False, indent=2))
@@ -917,6 +1454,7 @@ def main() -> None:
             current_stage = "polished_dialogue"
 
         pipeline_meta["status"] = "success"
+        pipeline_meta["finished_at"] = datetime.now().isoformat(timespec="seconds")
         pipeline_meta["final"] = {
             "stage": current_stage,
             "dialogue": str(current_dialogue_path),
@@ -924,7 +1462,14 @@ def main() -> None:
             "validation": str(current_validation_path),
             "pipeline_meta": str(pipeline_meta_path),
         }
-        write_json(pipeline_meta_path, pipeline_meta)
+        update_progress(
+            pipeline_meta_path,
+            pipeline_meta,
+            stage="completed",
+            percent=100,
+            label="Pipeline 已完成",
+            detail="最终结果已写入。",
+        )
 
         print("\nPipeline completed successfully.")
         print(f"Final stage:        {current_stage}")
@@ -932,12 +1477,24 @@ def main() -> None:
         print(f"Final validation:   {current_validation_path}")
         print(f"Source pack:        {source_pack_path}")
         print(f"Source anchor pack: {source_anchor_pack_path}")
-        print(f"Pipeline meta:      {pipeline_meta_path}")
+        print_pipeline_footer(status="success", pipeline_meta_path=pipeline_meta_path, pipeline_meta=pipeline_meta)
 
     except Exception as exc:
+        current_progress = pipeline_meta.get("progress", {}) or {}
+        current_percent = int(current_progress.get("percent") or 0)
+        set_progress(
+            pipeline_meta,
+            stage="failed",
+            percent=current_percent,
+            label="Pipeline 最终检查未通过或运行失败",
+            detail=str(exc),
+        )
         pipeline_meta["status"] = "failed"
+        pipeline_meta["finished_at"] = datetime.now().isoformat(timespec="seconds")
         pipeline_meta["error"] = str(exc)
-        write_json(pipeline_meta_path, pipeline_meta)
+        write_pipeline_meta(pipeline_meta_path, pipeline_meta)
+        print_pipeline_footer(status="failed", pipeline_meta_path=pipeline_meta_path, pipeline_meta=pipeline_meta)
+        print(f"Error:              {exc}")
         raise
 
 
