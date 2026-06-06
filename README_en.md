@@ -121,7 +121,7 @@ TTSDataGen V0.2 uses a local-first runtime architecture. Before installation, ma
 - Git
 - LM Studio
 - Local Qwen3-4B / Qwen3-32B models
-- A prepared local RAG database, or source data from which one can be rebuilt
+- A prepared local RAG database, or source data from which one can be rebuilt (This project provides the relevant scripts and methods for data acquisition.)
 
 ---
 

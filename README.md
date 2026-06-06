@@ -122,7 +122,7 @@ TTSDataGen V0.2 采用本地优先架构运行。安装前请确保你已经安�
 - Git
 - LM Studio
 - Qwen3-4B / Qwen3-32B 本地模型
-- 已准备好的本地 RAG 数据库，或可自行重新构建向量库
+- 已准备好的本地 RAG 数据库，或可自行重新构建向量库 (本项目提供相关脚本和获取数据方式)
 
 ---
 
@@ -276,8 +276,6 @@ polished_expanded_dialogue_pipeline_*.md
 *.validation.json
 outputs/pipeline_runs/pipeline_*.json
 ```
-
----
 
 ---
 
