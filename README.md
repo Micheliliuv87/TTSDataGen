@@ -3,7 +3,7 @@
 
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/b403c542-fcb4-4a59-b0cb-aed85e7ae316"
+  <video src="https://github.com/user-attachments/assets/1c32b448-a82d-4cab-9f72-f4dbca109085"
          width="800"
          controls
          loop
