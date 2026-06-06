@@ -13,7 +13,7 @@
 [效果演示](#-效果演示) ｜ [功能特性](#-功能特性) ｜ [安装](#-安装) ｜ [使用指南](#-使用指南) ｜ [架构文档](ARCHITECTURE.md) ｜ [常见问题](#-常见问题)
 
 <p align="center">
-  <a href="README.md">中文</a> | English
+  中文 | <a href="README_en.md">English</a>
 </p>
 
 </div>
