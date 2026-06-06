@@ -8,9 +8,13 @@
 ![Python](https://img.shields.io/badge/python-3.12+-green.svg)
 ![License](https://img.shields.io/badge/License-All%20Rights%20Reserved-red.svg)
 
-**创作者**: [Micheli V](https://github.com/Micheliliuv87)
+**创作者**: [Micheli V](https://micheliliuv87.github.io/)
 
 [效果演示](#-效果演示) ｜ [功能特性](#-功能特性) ｜ [安装](#-安装) ｜ [使用指南](#-使用指南) ｜ [架构文档](ARCHITECTURE.md) ｜ [常见问题](#-常见问题)
+
+<p align="center">
+  <a href="README.md">中文</a> | English
+</p>
 
 </div>
 
