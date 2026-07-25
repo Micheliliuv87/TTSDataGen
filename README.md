@@ -682,8 +682,6 @@ Issues 地址：
 https://github.com/Micheliliuv87/TTSDataGen/issues
 ```
 
-如果你的仓库名称不同，请将上面的链接替换为实际 Issues 地址。
-
 ---
 
 ### 改进规则文件
